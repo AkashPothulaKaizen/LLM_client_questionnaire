@@ -1,0 +1,7 @@
+langchain_community
+langchain
+scikit-learn
+boto3
+botocore
+pandas
+numpy
