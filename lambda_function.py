@@ -57,9 +57,26 @@ def lambda_handler(event, context):
     retrieved_data = []
     for i, idx in enumerate(indices[0]):
         retrieved_data.append(df["question_answer_data"].iloc[idx])
-        retrieved_data.append(document_embeddings_list[idx])
+        
+    formatted_data = "\n\n".join(retrieved_data)
+    second_formatted_prompt = SecondPrompt.format(question=query, data=formatted_data)
+    model_id="anthropic.claude-3-5-sonnet-20240620-v1:0"
+    Best_answer = question_answer(second_formatted_prompt,model_id)
+    json_format= json.loads(Best_answer)
+    df = pd.DataFrame([json_format])
+    
+    # Convert DataFrame to CSV in memory
+    csv_buffer = StringIO()
+    df.to_csv(csv_buffer, index=False)
+    
+    # Upload the CSV file to S3 bucket
+    s3_client = boto3.client('s3')
+    bucket_name = 'akashdemos3bucket'
+    s3_client.put_object(Bucket=bucket_name, Key='output.csv', Body=csv_buffer.getvalue())
+    
+    # print(f"CSV file has been successfully uploaded to the S3 bucket '{bucket_name}'")
     
     return {
         'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
+        'body': json.dumps('CSV file has been successfully uploaded to the S3 bucket')
     }
