@@ -2,9 +2,11 @@ import json
 import boto3
 import botocore
 import pandas as pd
-import io
+from io import StringIO
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
+from langchain_community.document_loaders.csv_loader import CSVLoader
+from langchain.prompts import PromptTemplate
 
 def embed_content(prompt_data):
     body = json.dumps({"inputText": prompt_data})
@@ -32,6 +34,84 @@ def embed_content(prompt_data):
         else:
             raise error
 
+def question_answer(prompt,model_id):
+    client = boto3.client("bedrock-runtime", region_name="us-east-1")
+    
+    # Format the request payload using the model's native structure.
+    native_request = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 2048,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+            }
+        ],
+    }
+    # Convert the native request to JSON.
+    request = json.dumps(native_request)
+    try:
+        # Invoke the model with the request.
+        response = client.invoke_model(modelId=model_id, body=request)
+        # print(response)
+        # print(response)
+        # print(f"response is {response}")
+        model_response = json.loads(response["body"].read())
+        response_text = model_response["content"][0]["text"]
+        return response_text
+    except (ClientError, Exception) as e:
+        print(f"ERROR: Can't invoke '{model_id}'. Reason: {e}")
+        exit(1)
+        
+SecondPrompt = PromptTemplate(
+    input_variables=["question", "data"],
+    template="""You are an AI assistant working for Kaizen Organization. Your task is to answer questions based on the provided data. Follow these steps to ensure accuracy and relevance:
+
+    Question: {question}
+    Data: {data}
+
+    
+    1. **Understand the Question**: Carefully read the question to grasp what information is being sought.
+    2. **Analyze the Data**: Examine the provided data thoroughly to identify the most relevant piece of information that directly answers the question.
+    3. **Extract the Answer**: Select the single most relevant piece of information from the data that answers the question. If the answer cannot be found in the data, clearly state "The information required to answer is missing from the data."
+    4. make sure to extract correct Serial_number 
+
+    
+    Please ensure that your response is in JSON format with the following structure. Include only the most relevant details, formatted as a single JSON object. 
+    
+    Your response should be in this exact format:
+    
+    {{
+        "user_question": "{question}",
+        "Serial_number": 5,
+        "Question": "question",
+        "Yes/No": "Yes",
+        "Answer": "The relevant answer based on the data.",
+        "Owner": "Name of the person or department responsible",
+        "Category": "Category of the information",
+        "Subsidiaries": "Name of the subsidiary, if applicable",
+        "Last Reviewed": "Date of the last review"
+    }}
+
+    If the information required to answer is missing from the data, use the following JSON format:
+    
+    {{
+        "user_question": "{question}",
+        "Serial_number": Not Available,
+        "Question": "question",
+        "Yes/No": "No",
+        "Answer": "The information required to answer is missing from the data. Please provide more relevant data in the prompt",
+        "Owner": "Not Available",
+        "Category": "Not Available",
+        "Subsidiaries": "Not Available",
+        "Last Reviewed": "Not Available"
+    }}
+    
+
+    Write only the JSON output and nothing more. Do not include additional text, explanations, or formatting. Ensure the output is a single JSON object that aligns with the structure provided. Here is the JSON output:
+    """,
+)
 
 
 def lambda_handler(event, context):
