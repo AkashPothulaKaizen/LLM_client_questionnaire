@@ -4,7 +4,7 @@ import botocore
 import pandas as pd
 from botocore.exceptions import ClientError
 import io
-from io import StringIO
+from io import StringIO,BytesIO
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from langchain_community.document_loaders.csv_loader import CSVLoader
@@ -117,6 +117,19 @@ SecondPrompt = PromptTemplate(
 
 
 def lambda_handler(event, context):
+    
+    s3_client_query = boto3.client("s3")
+    source_bucket = event['Records'][0]['s3']['bucket']['name']
+    source_key = event['Records'][0]['s3']['object']['key']
+    print(f"source bucket is {source_bucket}")
+    
+    response = s3_client_query.get_object(Bucket=source_bucket, Key=source_key)
+    query_file_content = response['Body'].read()
+    df_query = pd.read_excel(BytesIO(query_file_content))
+    print(f"data frame is : {df_query}")
+    
+
+
     # implement
     s3_client = boto3.client("s3")
     bucket = 'akashaudio'
@@ -128,7 +141,12 @@ def lambda_handler(event, context):
     document_embeddings_list = df["embeddings"].apply(eval).to_list()
     document_embeddings = np.array(document_embeddings_list)
     
-    query= "Do you maintain a record or database of all the assets your organization possesses?"
+    # Assuming the query is in the first cell of the first sheet
+    query = df_query.iloc[0, 0]
+    print(f"query is {query}")
+    
+    
+    # query= "Do you maintain a record or database of all the assets your organization possesses?"
     query_embeddings_list = embed_content(query)
     print("question is converted to embeddings sucessfully")
     
