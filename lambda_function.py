@@ -2,6 +2,7 @@ import json
 import boto3
 import botocore
 import pandas as pd
+from botocore.exceptions import ClientError
 import io
 from io import StringIO
 import numpy as np
@@ -138,11 +139,12 @@ def lambda_handler(event, context):
     retrieved_data = []
     for i, idx in enumerate(indices[0]):
         retrieved_data.append(df["question_answer_data"].iloc[idx])
-        
+    print("data is retrieved")
     formatted_data = "\n\n".join(retrieved_data)
     second_formatted_prompt = SecondPrompt.format(question=query, data=formatted_data)
     model_id="anthropic.claude-3-5-sonnet-20240620-v1:0"
     Best_answer = question_answer(second_formatted_prompt,model_id)
+    print("LLM gave the answer")
     json_format= json.loads(Best_answer)
     df = pd.DataFrame([json_format])
     
