@@ -2,6 +2,7 @@ import json
 import boto3
 import botocore
 import pandas as pd
+import io
 from io import StringIO
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
