@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain.prompts import PromptTemplate
+import uuid
 
 def embed_content(prompt_data):
     body = json.dumps({"inputText": prompt_data})
@@ -87,7 +88,6 @@ SecondPrompt = PromptTemplate(
     {{
         "user_question": "{question}",
         "Serial_number": 5,
-        "Question": "question",
         "Yes/No": "Yes",
         "Answer": "The relevant answer based on the data.",
         "Owner": "Name of the person or department responsible",
@@ -101,7 +101,6 @@ SecondPrompt = PromptTemplate(
     {{
         "user_question": "{question}",
         "Serial_number": Not Available,
-        "Question": "question",
         "Yes/No": "No",
         "Answer": "The information required to answer is missing from the data. Please provide more relevant data in the prompt",
         "Owner": "Not Available",
@@ -116,21 +115,7 @@ SecondPrompt = PromptTemplate(
 )
 
 
-def lambda_handler(event, context):
-    
-    s3_client_query = boto3.client("s3")
-    source_bucket = event['Records'][0]['s3']['bucket']['name']
-    source_key = event['Records'][0]['s3']['object']['key']
-    print(f"source bucket is {source_bucket}")
-    
-    response = s3_client_query.get_object(Bucket=source_bucket, Key=source_key)
-    query_file_content = response['Body'].read()
-    df_query = pd.read_excel(BytesIO(query_file_content))
-    print(f"data frame is : {df_query}")
-    
-
-
-    # implement
+def retrieve_answer(query):
     s3_client = boto3.client("s3")
     bucket = 'akashaudio'
     key = 'vector_store.csv'
@@ -138,18 +123,10 @@ def lambda_handler(event, context):
     response = s3_client.get_object(Bucket=bucket,Key=key)
     file_content = response['Body'].read().decode('utf-8')
     df = pd.read_csv(io.StringIO(file_content))
+    
     document_embeddings_list = df["embeddings"].apply(eval).to_list()
-    document_embeddings = np.array(document_embeddings_list)
-    
-    # Assuming the query is in the first cell of the first sheet
-    query = df_query.iloc[0, 0]
-    print(f"query is {query}")
-    
-    
-    # query= "Do you maintain a record or database of all the assets your organization possesses?"
     query_embeddings_list = embed_content(query)
-    print("question is converted to embeddings sucessfully")
-    
+    document_embeddings = np.array(document_embeddings_list)
     query_embeddings = np.array(query_embeddings_list).reshape(1, -1)
     knn = NearestNeighbors(n_neighbors=10)
     knn.fit(document_embeddings)
@@ -157,25 +134,48 @@ def lambda_handler(event, context):
     retrieved_data = []
     for i, idx in enumerate(indices[0]):
         retrieved_data.append(df["question_answer_data"].iloc[idx])
-    print("data is retrieved")
     formatted_data = "\n\n".join(retrieved_data)
-    second_formatted_prompt = SecondPrompt.format(question=query, data=formatted_data)
-    model_id="anthropic.claude-3-5-sonnet-20240620-v1:0"
-    Best_answer = question_answer(second_formatted_prompt,model_id)
-    print("LLM gave the answer")
-    json_format= json.loads(Best_answer)
-    df = pd.DataFrame([json_format])
+    return formatted_data
+  
     
+def get_answer(query,model_id):
+    retrieved_data = retrieve_answer(query)
+    # print(retrieved_data)
+    second_formatted_prompt = SecondPrompt.format(question=query, data=retrieved_data)
+    Best_answer = question_answer(second_formatted_prompt,model_id)
+    return Best_answer
+
+# Function to parse JSON strings
+def parse_json(json_str):
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        return None
+    
+def lambda_handler(event, context):
+    s3_client_query = boto3.client("s3")
+    source_bucket = "akashdemos3bucket"
+    source_key = "multiple_questions.xlsx"
+    print(f"source bucket is {source_bucket}")
+    response = s3_client_query.get_object(Bucket=source_bucket, Key=source_key)
+    query_file_content = response['Body'].read()
+    data_frame = pd.read_excel(BytesIO(query_file_content))
+    # print(f"data frame is : {df_query}")
+    top_50 = data_frame["query"].iloc[:]
+    model_id="anthropic.claude-3-5-sonnet-20240620-v1:0"
+    data_frame["best_answer"]=top_50.apply(lambda q: get_answer(q, model_id))
+    data = data_frame["best_answer"].iloc[:]
+    data["one_rephrased_best_answer"] = data.apply(parse_json)
+    best_answer_df = pd.json_normalize(data['one_rephrased_best_answer'])
     # Convert DataFrame to CSV in memory
     csv_buffer = StringIO()
-    df.to_csv(csv_buffer, index=False)
-    
+    best_answer_df.to_csv(csv_buffer, index=False)
     # Upload the CSV file to S3 bucket
     s3_client = boto3.client('s3')
     bucket_name = 'akashdemos3bucket'
-    s3_client.put_object(Bucket=bucket_name, Key='output.csv', Body=csv_buffer.getvalue())
-    
-    # print(f"CSV file has been successfully uploaded to the S3 bucket '{bucket_name}'")
+    file_key = f"answers-file-{uuid.uuid4()}.csv"
+    s3_client.put_object(Bucket=bucket_name, Key=file_key, Body=csv_buffer.getvalue())
+    print(f"CSV file has been successfully uploaded to the S3 bucket '{bucket_name}'")
     
     return {
         'statusCode': 200,
