@@ -42,7 +42,7 @@ class LLMModelCaller:
             # Invoke the model with the request
             response = self.client.invoke_model(
                 modelId=self.model_id, body=request)
-            print(response)
+            # print(response)
             response_body = json.loads(response["body"].read())
             response_text = response_body["content"][0]["text"]
             return response_text
