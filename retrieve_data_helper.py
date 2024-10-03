@@ -1,51 +1,82 @@
-import json
 import boto3
-from botocore.exceptions import ClientError
-from typing import Optional
+import pandas as pd
+import io
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+import json
+import botocore
+from typing import List
 
 
-class LLMModelCaller:
+class DataRetriever:
     def __init__(self, config):
-        """
-        Initialize the LLMModelCaller with a specified model ID and AWS region.
-        Parameters:
-        model_id (str): The ID of the model to use for generating the answer.
-        region_name (str): The AWS region where the Bedrock runtime is located.
-        """
-        self.model_id = config.model_id
-        self.client = boto3.client("bedrock-runtime",
-                                   region_name=config.region_name)
+        self.s3_client = boto3.client("s3")
+        self.bucket = config.vector_store_bucket
+        self.key = config.vector_store_key
+        self.model_id = config.embed_model_id
+        self.bedrock_runtime = boto3.client('bedrock-runtime')
+        self.n_neighbors = config.n_neighbors
 
-    def question_answer(self, prompt: str) -> Optional[str]:
+    def embed_content(self, prompt_data: str) -> str:
         """
-        Generate an answer to the given prompt using the specified model.
+        Generate embeddings for the given prompt data.
         Parameters:
-        prompt (str): The input prompt for the model.
+        prompt_data (str): The input text to be embedded. 
         Returns:
-        str: The generated answer from the model.
+        list: The embedding vector.
         """
-        # Format the request payload using the model's native structure
-        native_request = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,
-            "temperature": 0,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": prompt}],
-                }
-            ],
-        }
-        # Convert the native request to JSON
-        request = json.dumps(native_request)
+        body = json.dumps({"inputText": prompt_data})
         try:
-            # Invoke the model with the request
-            response = self.client.invoke_model(
-                modelId=self.model_id, body=request)
-            print(response)
-            response_body = json.loads(response["body"].read())
-            response_text = response_body["content"][0]["text"]
-            return response_text
-        except (ClientError, Exception) as e:
-            print(f"ERROR: Can't invoke '{self.model_id}'. Reason: {e}")
-            return None
+            response = self.bedrock_runtime.invoke_model(
+                body=body, modelId=self.model_id
+            )
+            response_body = json.loads(response.get("body").read())
+            embedding = response_body.get("embedding")
+            return embedding
+        except botocore.exceptions.ClientError as error:
+            if error.response['Error']['Code'] == 'AccessDeniedException':
+                print(f"\x1b[41m{error.response['Error']['Message']}\n"
+                      "To troubleshoot this issue, please refer to the following resources:\n"
+                      "https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html\n"
+                      "https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html\x1b[0m\n")
+            else:
+                raise error
+
+    def load_data_from_s3(self) -> None:
+        """Load the csv file from S3 bucket (vector_store_bucket)."""
+        response = self.s3_client.get_object(Bucket=self.bucket, Key=self.key)
+        file_content = response['Body'].read().decode('utf-8')
+        self.df = pd.read_csv(io.StringIO(file_content))
+
+    def get_document_embeddings(self) -> List[List[float]]:
+        """Convert the embeddings from string to list."""
+        return self.df["embeddings"].apply(eval).to_list()
+
+    def get_query_embeddings(self, query: str) -> List[float]:
+        """convert query into embeddings vector."""
+        return self.embed_content(query)
+
+    def find_nearest_neighbors(self,
+                               document_embeddings: List[List[float]],
+                               query_embeddings: List[float]) -> np.ndarray:
+        """Find the nearest neighbors for the query embeddings."""
+        knn = NearestNeighbors(n_neighbors=self.n_neighbors)
+        knn.fit(np.array(document_embeddings))
+        distances, indices = knn.kneighbors(
+            np.array(query_embeddings).reshape(1, -1)
+        )
+        return indices
+
+    def retrieve_data(self, query: str) -> str:
+        """Retrieve the most relevant data for the given query."""
+        self.load_data_from_s3()
+        document_embeddings = self.get_document_embeddings()
+        query_embeddings = self.get_query_embeddings(query)
+        indices = self.find_nearest_neighbors(
+            document_embeddings, query_embeddings
+        )
+        retrieved_data = []
+        for i, idx in enumerate(indices[0]):
+            retrieved_data.append(self.df["question_answer_data"].iloc[idx])
+        formatted_data = "\n\n".join(retrieved_data)
+        return formatted_data
