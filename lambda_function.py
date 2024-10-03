@@ -1,6 +1,8 @@
 import boto3
 import json
 import pandas as pd
+import io
+from io import StringIO,BytesIO
 from dataclasses import dataclass
 from retrieve_data_helper import DataRetriever
 from call_llm_model_helper import LLMModelCaller
