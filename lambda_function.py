@@ -104,7 +104,6 @@ def get_answer(query: str, config: Config) -> str:
     """
     retriever = DataRetriever(config)
     retrieved_data = retriever.retrieve_data(query)
-    # print(retrieved_data)
     llm_caller = LLMModelCaller(config)
     prompt = PromptTemplate(input_variables=["question", "data"], template=config.template_string)
     final_prompt = prompt.format(question=query, data=retrieved_data)
