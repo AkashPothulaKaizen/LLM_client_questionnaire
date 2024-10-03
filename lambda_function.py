@@ -115,7 +115,7 @@ def lambda_handler(event, context):
     s3_client_query = boto3.client("s3")
     source_bucket = event['Records'][0]['s3']['bucket']['name']
     source_key = event['Records'][0]['s3']['object']['key']
-    print(f"source bucket is {source_bucket}")
+    # print(f"source bucket is {source_bucket}")
     response = s3_client_query.get_object(Bucket=source_bucket, Key=source_key)
     query_file_content = response['Body'].read()
     data_frame = pd.read_excel(BytesIO(query_file_content))
